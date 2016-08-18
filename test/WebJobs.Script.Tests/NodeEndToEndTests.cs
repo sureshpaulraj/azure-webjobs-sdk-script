@@ -155,7 +155,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
             await NotificationHubTest("NotificationHubNative");
         }
 
-        [Fact]
+        [Fact(Skip = "Temporarily disabling")]
         public async Task MobileTables()
         {
             await MobileTablesTest();
