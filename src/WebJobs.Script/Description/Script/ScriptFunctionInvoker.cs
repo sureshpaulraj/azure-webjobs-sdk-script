@@ -89,62 +89,69 @@ namespace Microsoft.Azure.WebJobs.Script.Description
             FunctionStartedEvent startedEvent = new FunctionStartedEvent(functionExecutionContext.InvocationId, Metadata);
             _metrics.BeginEvent(startedEvent);
 
-            // perform any required input conversions
-            object convertedInput = input;
-            if (input != null)
+            try
             {
-                HttpRequestMessage request = input as HttpRequestMessage;
-                if (request != null)
+                // perform any required input conversions
+                object convertedInput = input;
+                if (input != null)
                 {
-                    // TODO: Handle other content types? (E.g. byte[])
-                    if (request.Content != null && request.Content.Headers.ContentLength > 0)
+                    HttpRequestMessage request = input as HttpRequestMessage;
+                    if (request != null)
                     {
-                        convertedInput = ((HttpRequestMessage)input).Content.ReadAsStringAsync().Result;
+                        // TODO: Handle other content types? (E.g. byte[])
+                        if (request.Content != null && request.Content.Headers.ContentLength > 0)
+                        {
+                            convertedInput = ((HttpRequestMessage)input).Content.ReadAsStringAsync().Result;
+                        }
                     }
                 }
+
+                TraceWriter.Info(string.Format("Function started (Id={0})", invocationId));
+
+                string workingDirectory = Path.GetDirectoryName(_scriptFilePath);
+                string functionInstanceOutputPath = Path.Combine(Path.GetTempPath(), "Functions", "Binding", invocationId);
+
+                Dictionary<string, string> environmentVariables = new Dictionary<string, string>();
+                InitializeEnvironmentVariables(environmentVariables, functionInstanceOutputPath, input, _outputBindings, functionExecutionContext);
+
+                Dictionary<string, string> bindingData = GetBindingData(convertedInput, binder);
+                bindingData["InvocationId"] = invocationId;
+
+                await ProcessInputBindingsAsync(convertedInput, functionInstanceOutputPath, binder, bindingData, environmentVariables);
+
+                // TODO
+                // - put a timeout on how long we wait?
+                // - need to periodically flush the standard out to the TraceWriter
+                Process process = CreateProcess(path, workingDirectory, arguments, environmentVariables);
+                process.Start();
+                process.WaitForExit();
+
+                startedEvent.Success = process.ExitCode == 0;
+
+                if (!startedEvent.Success)
+                {
+                    string error = process.StandardError.ReadToEnd();
+                    throw new ApplicationException(error);
+                }
+
+                string output = process.StandardOutput.ReadToEnd();
+                TraceWriter.Info(output);
+                traceWriter.Info(output);
+
+                await ProcessOutputBindingsAsync(functionInstanceOutputPath, _outputBindings, input, binder, bindingData);
+
+                TraceWriter.Info(string.Format("Function completed (Success, Id={0})", invocationId));
             }
-
-            TraceWriter.Info(string.Format("Function started (Id={0})", invocationId));
-
-            string workingDirectory = Path.GetDirectoryName(_scriptFilePath);
-            string functionInstanceOutputPath = Path.Combine(Path.GetTempPath(), "Functions", "Binding", invocationId);
-
-            Dictionary<string, string> environmentVariables = new Dictionary<string, string>();
-            InitializeEnvironmentVariables(environmentVariables, functionInstanceOutputPath, input, _outputBindings, functionExecutionContext);
-
-            Dictionary<string, string> bindingData = GetBindingData(convertedInput, binder);
-            bindingData["InvocationId"] = invocationId;
-
-            await ProcessInputBindingsAsync(convertedInput, functionInstanceOutputPath, binder, bindingData, environmentVariables);
-
-            // TODO
-            // - put a timeout on how long we wait?
-            // - need to periodically flush the standard out to the TraceWriter
-            Process process = CreateProcess(path, workingDirectory, arguments, environmentVariables);
-            process.Start();
-            process.WaitForExit();
-
-            bool failed = process.ExitCode != 0;
-            startedEvent.Success = !failed;
-            _metrics.EndEvent(startedEvent);
-
-            if (failed)
+            catch
             {
                 startedEvent.Success = false;
-
                 TraceWriter.Error(string.Format("Function completed (Failure, Id={0})", invocationId));
-
-                string error = process.StandardError.ReadToEnd();
-                throw new ApplicationException(error);
+                throw;
             }
-
-            string output = process.StandardOutput.ReadToEnd();
-            TraceWriter.Info(output);
-            traceWriter.Info(output);
-
-            await ProcessOutputBindingsAsync(functionInstanceOutputPath, _outputBindings, input, binder, bindingData);
-
-            TraceWriter.Info(string.Format("Function completed (Success, Id={0})", invocationId));
+            finally
+            {
+                _metrics.EndEvent(startedEvent);
+            }
         }
 
         private void InitializeEnvironmentVariables(Dictionary<string, string> environmentVariables, string functionInstanceOutputPath, object input, Collection<FunctionBinding> outputBindings, ExecutionContext context)
