@@ -338,6 +338,7 @@
     <Compile Include="Description\DotNet\FunctionAssemblyLoaderTests.cs" />
     <Compile Include="Description\DotNet\DotNetFunctionInvokerTests.cs" />
     <Compile Include="Description\DotNet\PackageManagerTests.cs" />
+    <Compile Include="Description\DotNet\DotNetFunctionDescriptorProviderTests.cs" />
     <Compile Include="EndToEndTestFixture.cs" />
     <Compile Include="EndToEndTestsBase.cs" />
     <Compile Include="ApiHub\FakeTabularConnectorAdapter.cs" />
